@@ -87,8 +87,8 @@ html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:var(-
   <div id="conn">đang kết nối…</div>
 </div></div>
 
-<script src="/live/ritual-director.js"></script>
-<script>
+<script type="module">
+import { createRitualDirector } from "/live/ritual-director.js";
 /* ======================= stage fit ======================= */
 const stage = document.getElementById('stage');
 function fit(){ const s = Math.min(innerWidth/1080, innerHeight/1920); stage.style.transform = `translate(-50%,-50%) scale(${s})`; }
