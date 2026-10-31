@@ -1,0 +1,31 @@
+name: Import Chanh Dien Online upstream
+on:
+  push:
+    paths:
+      - .github/workflows/import-upstream.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout destination
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Fetch upstream source
+        run: |
+          git clone --depth 1 https://github.com/kentjuno/chanh-dien-online.git /tmp/chanh-dien-upstream
+          rsync -a --exclude=.git --exclude=.github /tmp/chanh-dien-upstream/ ./
+      - name: Preserve upstream attribution and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Import Chanh Dien Online upstream (MIT) incl. assets and LIVE tools"
+            git push origin HEAD:main
+          fi
