@@ -59,6 +59,7 @@ const titles = {
   'temple.drawFortune': 'Lời quán chiếu',
   'temple.offerLotus': 'Dâng hoa sen'
 };
+const canSpeakFor = (method, options) => options.speak !== false && !['temple.strikeWoodenFish', 'temple.offerLotus'].includes(method);
 export function createRitualEngine({ filePath, emit = () => {}, speak = () => {}, now = Date.now } = {}) {
   let totals = blankTotals(), version = 1, sequence = 0;
   const cooldowns = new Map();
@@ -108,12 +109,13 @@ export function createRitualEngine({ filePath, emit = () => {}, speak = () => {}
     const event = {
       id: 'ritual-' + now() + '-' + (++sequence),
       type: method.slice('temple.'.length), title: titles[method],
-      user, wish, count, reflection, at: now()
+      user, wish, count, reflection, at: now(),
+      viewerId: typeof params.viewerId === 'string' ? params.viewerId.slice(0, 90) : null,
+      speechExpected: canSpeakFor(method, options)
     };
     scheduleSave();
     emit(event);
-    const canSpeak = options.speak !== false && method !== 'temple.strikeWoodenFish'
-      && method !== 'temple.offerLotus';
+    const canSpeak = canSpeakFor(method, options);
     if (canSpeak) {
       const line = method === 'temple.drawFortune'
         ? user + ', lời quán chiếu hôm nay: ' + reflection.title + '. ' + reflection.text
@@ -124,7 +126,7 @@ export function createRitualEngine({ filePath, emit = () => {}, speak = () => {}
             : method === 'temple.bow'
               ? 'Nam mô A Di Đà Phật. ' + user + ' đảnh lễ Tam Bái.'
               : 'Nam mô A Di Đà Phật. ' + user + ' thỉnh chuông.';
-      speak(line, { tag: 'ritual' });
+      speak(line, { tag: 'ritual', ritualId: event.id });
     }
     return { event, state: getState() };
   }
@@ -136,7 +138,7 @@ export function createRitualEngine({ filePath, emit = () => {}, speak = () => {}
     if (ts - (cooldowns.get(key) ?? -Infinity) < 6000) return null;
     cooldowns.set(key, ts);
     if (cooldowns.size > 1000) cooldowns.delete(cooldowns.keys().next().value);
-    return perform(method, { user, wish: method === 'temple.sendPrayer' ? text : '' }, { speak: withVoice });
+    return perform(method, { user, viewerId: String(id || ''), wish: method === 'temple.sendPrayer' ? text : '' }, { speak: withVoice });
   }
   async function flush() { clearTimeout(timer); await persist(); }
   return { getState, perform, fromComment, flush };

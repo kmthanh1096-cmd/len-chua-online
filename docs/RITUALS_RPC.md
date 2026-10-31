@@ -60,3 +60,7 @@ Không lưu ID TikTok, tên, lời cầu nguyện trong file này. File có th�
 npm test chạy node --test: phân tích bình luận, giữ nguyên hành vi bình luận
 thường, giới hạn spam, bảo vệ API token, kiểm tra phương thức, và lưu tổng số.
 GitHub Actions chạy kiểm thử ở mỗi pull request.
+
+## Nâng cấp hoạt ảnh 2.5D (v2)
+
+Hoạt ảnh có máy trạng thái độc lập `live/ritual-director.js`, hàng đợi tối đa 12 nghi lễ chờ, một nhân vật đang làm lễ, đi qua lối giữa đến bàn hương, thực hiện một hoặc ba lạy, rồi trở về bồ đoàn. Người thật có chỗ ngồi được ẩn tại bồ đoàn khi đi làm lễ; các lần render còn lại giữ trạng thái ghế. Hoa đăng vẽ bằng Canvas bay lên có giới hạn thời gian sống. Sự kiện TTS truyền `ritualId` để đồng bộ khởi phát/hoàn thành đọc tương ứng; không phụ thuộc vào các câu đọc kinh định kỳ. Nếu giọng đọc không bắt đầu, máy trạng thái chuyển tiếp sau 12 giây. Chưa sử dụng sprite lạy mới; chuyển động cúi lạy sử dụng phép biến đổi tỷ lệ của sprite hiện có. Kiểm thử bằng `npm test`.

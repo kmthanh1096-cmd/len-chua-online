@@ -87,6 +87,7 @@ html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:var(-
   <div id="conn">đang kết nối…</div>
 </div></div>
 
+<script src="/live/ritual-director.js"></script>
 <script>
 /* ======================= stage fit ======================= */
 const stage = document.getElementById('stage');
@@ -167,11 +168,19 @@ let chantHide=null;
 function showChant(text){ document.getElementById('chantText').textContent=text; const el=document.getElementById('chant'); el.classList.add('show'); clearTimeout(chantHide); chantHide=setTimeout(()=>el.classList.remove('show'), 14000); }
 
 /* ======================= ritual effects ======================= */
+const ritualDirector=createRitualDirector({
+  onStart: event => {
+    const v=visitors.get(event.viewerId)||[...visitors.values()].find(x=>x.name===event.user);
+    return {x:v?.seat?.x||540,y:v?.seat?.y||1760};
+  }
+});
+const ritualLights=[];
 let ritualHide=null;
 function showRitual(event){
   const title=document.getElementById('ritualTitle'), detail=document.getElementById('ritualText'), pane=document.getElementById('ritual');
   title.textContent=event.title+' · '+event.user;
   detail.textContent=event.reflection ? event.reflection.title+' — '+event.reflection.text : event.wish || (event.type==='bow' ? 'Đảnh lễ Tam Bái' : '');
+  if (!ritualDirector.enqueue(event)) return;
   pane.classList.add('show'); clearTimeout(ritualHide);
   ritualHide=setTimeout(()=>pane.classList.remove('show'),8500);
   const t=event.type;
@@ -181,10 +190,8 @@ function showRitual(event){
     const kind=t==='burnIncense'?'incense':'lotus';
     for(let i=0;i<Math.min(8,event.count*3);i++) fx.push({kind,x:400+Math.random()*280,y:1050+Math.random()*180,t:0,life:4,scale:.25});
   }
-  if(t==='bow'){
-    for(const v of visitors.values()) v.bow=1;
-    bell();
-  }
+  if(t==='bow') bell();
+  if(t==='sendPrayer') ritualLights.push({x:540,y:1130,life:20,at:performance.now(),text:event.user});
 }
  /* ======================= audio ======================= */
 let AC=null, master=null, musicGain=null, sfx=null, settings={ music:true, mo:true, moBpm:52 };
@@ -218,12 +225,12 @@ function mo(){
 let moTimer=null; function scheduleMo(){ clearInterval(moTimer); if (AC && settings.mo) moTimer=setInterval(mo, 60000/Math.max(20,settings.moBpm||52)); }
 // server-made voice lines play one after another
 const ttsQ=[]; let ttsPlaying=false;
-function queueTTS(url, onStart){ ttsQ.push({url,onStart}); playTTS(); }
+function queueTTS(url, ritualId){ if(ttsQ.length>=14)ttsQ.shift(); ttsQ.push({url,ritualId}); playTTS(); }
 function playTTS(){
   if (ttsPlaying || !ttsQ.length || !AC) return; ttsPlaying=true;
-  const {url,onStart}=ttsQ.shift(); const el=new Audio(url); const src=AC.createMediaElementSource(el); const g=AC.createGain(); g.gain.value=1.25; src.connect(g); g.connect(master);
-  el.onplay=()=>{ duck(true); onStart&&onStart(); }; el.onended=el.onerror=()=>{ duck(false); ttsPlaying=false; setTimeout(playTTS,350); };
-  el.play().catch(()=>{ ttsPlaying=false; });
+  const {url,ritualId}=ttsQ.shift(); const el=new Audio(url); const src=AC.createMediaElementSource(el); const g=AC.createGain(); g.gain.value=1.25; src.connect(g); g.connect(master);
+  el.onplay=()=>{ duck(true); if(ritualId)ritualDirector.speechStart(ritualId); }; el.onended=el.onerror=()=>{ duck(false); if(ritualId)ritualDirector.speechEnd(ritualId); ttsPlaying=false; setTimeout(playTTS,350); };
+  el.play().catch(()=>{ if(ritualId)ritualDirector.speechEnd(ritualId); ttsPlaying=false; setTimeout(playTTS,350); });
 }
 
 /* ======================= effects ======================= */
@@ -249,7 +256,7 @@ function connect(){
     switch(m.t){
       case 'state':
         Object.assign(settings,m.settings); applySettings(); startedAt=m.startedAt;
-        visitors.clear(); order=[]; layout(m.cap); for (const p of m.viewers) addVisitor(p,true); updateCount(); renderMerit(); break;
+        visitors.clear(); order=[]; ritualDirector.reset(); ritualLights.length=0; layout(m.cap); for (const p of m.viewers) addVisitor(p,true); updateCount(); renderMerit(); break;
       case 'settings': Object.assign(settings,m.settings); applySettings(); if (m.cap!==cap){ layout(m.cap); updateCount(); } break;
       case 'join': if (m.cap!==cap) layout(m.cap); addVisitor(m.v, m.v.demo && visitors.size>8); updateCount(); break;
       case 'leave': removeVisitor(m.id); updateCount(); renderMerit(); break;
@@ -257,7 +264,7 @@ function connect(){
       case 'chat': { const v=visitors.get(m.id); if(v){ v.bubble={text:m.text, until:performance.now()+6000}; v.bow=.6; } } break;
       case 'gift': { const v=visitors.get(m.id); if(v){ v.coins=m.total; giftFx(v,m.tier); } renderMerit(); showGift(m); } break;
       case 'like': { const v=visitors.get(m.id); if(v) hearts(v,m.n); } break;
-      case 'tts': queueTTS(m.url); break;
+      case 'tts': queueTTS(m.url,m.ritualId); break;
       case 'chant': showChant(m.text); bell(); break;
       case 'ritual': showRitual(m.event); break;
       case 'bell': bell(true); break;
@@ -307,10 +314,13 @@ function frame(now){
   // teachers
   for (const tc of TEACHERS){ if (tc.master){ ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.globalAlpha=.35+.1*Math.sin(t*1.5); sprite(A.halo,tc.x,tc.y-120,.9,.5); ctx.restore(); }
     sprite(A[tc.skin],tc.x,tc.y,tc.s); tag(tc.name,tc.x,tc.y-tc.s*260-22,tc.s,'gold'); }
-  // visitors back to front
+  // 2.5D ceremony on central aisle: single active worshipper, bounded ritual queue.
+  const rite=ritualDirector.advance(dt);
+  const ritualVisitor=rite && (visitors.get(rite.event.viewerId)||[...visitors.values()].find(v=>v.name===rite.event.user));
   const bubbles=[];
   const list=[...visitors.values()].sort((a,b)=>a.y-b.y);
   for (const v of list){
+    if(rite && v===ritualVisitor)continue; // no duplicate while worshipper visits altar
     const anim=hasAnim(v.skin), s=v.seat?.scale||.4;
     if (v.state==='walk' && v.seat){
       const depth=(v.y-FLOOR.yTop)/(FLOOR.yBot-FLOOR.yTop), sp=(170+190*Math.max(0,Math.min(1.5,depth)))*dt, dx=v.seat.x-v.x, dy=v.seat.y-v.y;
@@ -332,6 +342,28 @@ function frame(now){
     const ty=v.y-topY-14*ws/.4;
     tag(v.name, v.x, ty, ws, v.skin==='master'||v.coins>=99?'gold':'', avatar(v.avatar), v.state==='sit' ? v.seat?.gap : 0);
     if (v.bubble && now<v.bubble.until) bubbles.push([v.bubble.text, v.x, ty-Math.max(18,30*ws/.4), ws]); else v.bubble=null;
+  }
+  if(rite){
+    const person=ritualVisitor;
+    const skin=person?.skin==='master'?'monk':person?.skin||'man';
+    const scale=.29+Math.max(0,Math.min(1,(rite.y-1175)/700))*.15;
+    ctx.save();ctx.translate(rite.x,rite.y);ctx.globalAlpha=.98;
+    if(rite.bow){ctx.transform(1,0,0,1-rite.bow*.56,0,-rite.bow*16);}
+    sprite(A[skin]||A.man,0,0,scale);ctx.restore();
+    if(rite.stage==='bowing' && rite.bow>.6){ctx.save();ctx.globalAlpha=rite.bow*.55;sprite(A.halo,rite.x,rite.y-95,.7,.5);ctx.restore();}
+    tag(rite.event.user,rite.x,rite.y-290*scale-22,scale,'gold');
+    if(rite.stage==='bowing'&&rite.event.type==='burnIncense'){
+      ctx.save();ctx.globalAlpha=.85;sprite(A.incense,rite.x,rite.y-170*scale,.3,.5);ctx.restore();
+    }
+  }
+  // Floating sky lanterns: warm core, paper shade, gentle sway, no external image dependencies.
+  for(let i=ritualLights.length-1;i>=0;i--){
+    const l=ritualLights[i], age=(now-l.at)/1000;
+    if(age>l.life){ritualLights.splice(i,1);continue;}
+    const x=l.x+Math.sin(age*1.25+i)*24,y=l.y-age*56,alpha=Math.min(1,age*2,(l.life-age)*.35);
+    ctx.save();ctx.globalAlpha=Math.max(0,alpha);ctx.shadowColor='#ffc15b';ctx.shadowBlur=25;
+    ctx.fillStyle='#e6ae55';ctx.beginPath();ctx.moveTo(x-20,y+12);ctx.lineTo(x-15,y-20);ctx.quadraticCurveTo(x,y-43,x+15,y-20);ctx.lineTo(x+20,y+12);ctx.closePath();ctx.fill();
+    ctx.shadowBlur=0;ctx.fillStyle='#fff0b3';ctx.fillRect(x-11,y-13,22,23);ctx.restore();
   }
   for (const b of bubbles) bubble(...b);
   // gift icons rising, petals / hearts
