@@ -11,6 +11,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
+import { createRitualEngine } from './rituals.mjs';
+import { createRpcHandler } from './rpc.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');            // repo root: serves /assets, /live
@@ -34,6 +36,12 @@ const settings = {
 };
 const viewers = new Map();           // id -> { id, name, skin, avatar, coins, joinedAt, lastAt, lastText, lastTextAt, demo }
 const startedAt = Date.now();
+const ritualEngine = createRitualEngine({
+  filePath: path.join(__dirname, 'data', 'ritual-state.json'),
+  emit: event => broadcast({ t: 'ritual', event }),
+  speak: (line, meta) => say(line, meta)
+});
+const ritualState = () => ritualEngine.getState();
 let tiktok = null, tiktokState = { status: 'idle', uniqueId: '', error: '' };
 const log = [];
 function addLog(s){ const line = `[${new Date().toLocaleTimeString('vi-VN')}] ${s}`; log.push(line); if (log.length > 300) log.shift(); broadcast({ t:'log', line }, 'control'); console.log(line); }
@@ -57,7 +65,7 @@ function skinFromText(t){
 const DEFAULT_SKINS = ['man', 'woman', 'woman', 'man', 'granny'];
 
 function pub(v){ return { id:v.id, name:v.name, skin:v.skin, avatar:v.avatar||'', coins:v.coins, demo:!!v.demo }; }
-function snapshot(){ return { t:'state', settings, viewers:[...viewers.values()].map(pub), cap: capacity(), startedAt, tiktok: tiktokState }; }
+function snapshot(){ return { t:'state', settings, viewers:[...viewers.values()].map(pub), cap: capacity(), startedAt, tiktok: tiktokState, rituals: ritualState() }; }
 
 function seat(id, name, opts = {}){
   let v = viewers.get(id);
@@ -83,6 +91,7 @@ function onChat(id, name, text, avatar){
   if (!isNew && want && want !== v.skin){ v.skin = want; broadcast({ t:'skin', id, skin: want }); }
   v.lastText = text; v.lastTextAt = Date.now();
   broadcast({ t:'chat', id, name: v.name, text });
+  if (!v.demo && !String(id).startsWith('sim_')) ritualEngine.fromComment({ id, user: v.name, text });
 }
 
 function onGift(id, name, giftName, count, diamonds, avatar){
@@ -199,6 +208,13 @@ function onControl(m){
     case 'bell': broadcast({ t:'bell' }); break;
     case 'mo': broadcast({ t:'mo1' }); break;
     case 'chant': chant(); break;
+    case 'ritual': {
+      try {
+        const result = ritualEngine.perform(m.method, { user: m.name, wish: m.wish, count: m.count }, { speak: m.readTts !== false });
+        broadcast({ t:'ritualState', rituals: result.state });
+      } catch (err) { addLog('Nghi lễ không hợp lệ: ' + err.message); }
+      break;
+    }
     case 'say': if (m.text) say(String(m.text).slice(0, 400), { tag:'say' }); break;
     case 'settings':
       applySettings(m.settings || {});
@@ -269,6 +285,12 @@ function resolveStatic(urlPath){
 }
 const server = http.createServer((req, res) => {
   if (!okHost(req.headers.host)) { res.writeHead(421).end('wrong host'); return; }
+  if (req.url === '/rpc') {
+    createRpcHandler({ engine: ritualEngine, token: process.env.TEMPLE_RPC_TOKEN,
+      allowOrigin: origin => { try { return okHost(new URL(origin).host); } catch { return false; } },
+      onState: rituals => broadcast({ t: 'ritualState', rituals }) })(req, res);
+    return;
+  }
   if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405).end(); return; }
   let p; try { p = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { res.writeHead(400).end(); return; }
   const file = resolveStatic(p);
@@ -284,12 +306,12 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 64 * 1024,
   verifyClient: ({ origin, req }) => {
     if (!okHost(req.headers.host)) return false;
-    if (!origin) return true;                                   // OBS / non-browser clients send no Origin
+    if (!origin) return true;                                   // no-Origin clients are forced into read-only overlay role
     try { return okHost(new URL(origin).host); } catch { return false; }
   } });
 function broadcast(msg, only){ const s = JSON.stringify(msg); for (const c of wss.clients) if (c.readyState === 1 && (!only || c.role === only)) c.send(s); }
 wss.on('connection', (ws, req) => {
-  ws.role = new URL(req.url, 'http://x').searchParams.get('role') === 'control' ? 'control' : 'overlay';
+  ws.role = req.headers.origin && new URL(req.url, 'http://x').searchParams.get('role') === 'control' ? 'control' : 'overlay';
   ws.send(JSON.stringify(snapshot()));
   if (ws.role === 'control') ws.send(JSON.stringify({ t:'logs', lines: log }));
   ws.on('message', buf => {

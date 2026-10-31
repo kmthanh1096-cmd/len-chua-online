@@ -119,7 +119,7 @@ export function createRitualEngine({ filePath, emit = () => {}, speak = () => {}
         ? user + ', lời quán chiếu hôm nay: ' + reflection.title + '. ' + reflection.text
         : method === 'temple.sendPrayer'
           ? 'Nam mô A Di Đà Phật. ' + user + ' gửi lời cầu nguyện. ' + (wish || 'Nguyện cho mọi người bình an.')
-          : method === 'temple.bow'
+          : method === 'temple.burnIncense'
             ? 'Nam mô A Di Đà Phật. ' + user + ' thành tâm dâng hương.'
             : method === 'temple.bow'
               ? 'Nam mô A Di Đà Phật. ' + user + ' đảnh lễ Tam Bái.'
