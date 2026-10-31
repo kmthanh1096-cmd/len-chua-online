@@ -107,24 +107,38 @@ function avatar(url){ if(!url) return null; let im=avatars.get(url); if(!im){ im
 
 /* ======================= seats ======================= */
 // Floor trapezoid in the painting: back row just below the altar, front row near the bottom.
-const FLOOR = { yTop: 1215, yBot: 1845, halfTop: 290, halfBot: 430 };
-const GRID = { 24:[6,4], 36:[6,6], 64:[8,8], 100:[10,10] };
-let cap = 24, seats = [];
+// Coordinates are aligned to the actual cushions painted in assets/hall.jpg.
+// Start from the visible front cushion rows; for 36+ use interpolated back rows.
+const CUSHION_ROWS=[
+  {y:1828,x:[205,387,540,693,875]},
+  {y:1710,x:[250,390,540,690,830]},
+  {y:1595,x:[293,410,540,670,787]},
+  {y:1485,x:[333,438,540,642,747]},
+  {y:1390,x:[375,458,540,622,705]},
+  {y:1308,x:[420,480,540,600,660]}
+];
+const GRID={24:[6,4],36:[6,6],64:[8,8],100:[10,10]};
+const FLOOR={yTop:1270,yBot:1830};
+let cap=24,seats=[];
 function layout(c){
-  cap = c; const [cols, rows] = GRID[c] || GRID[24]; seats = [];
-  for (let r=0;r<rows;r++){
-    const t = rows===1 ? .5 : r/(rows-1);                     // 0 = back row
-    const y = FLOOR.yTop + (FLOOR.yBot-FLOOR.yTop)*t;
-    const half = FLOOR.halfTop + (FLOOR.halfBot-FLOOR.halfTop)*t;
-    const scale = (.26 + .24*t) * (6/cols) ** .75;
-    const gap = 2*half/(cols-1) * .93;                        // room for one name tag
-    for (let k=0;k<cols;k++){
-      let u = (k-(cols-1)/2)/((cols-1)/2); u = Math.sign(u)*(.14 + .86*Math.abs(u));   // open a centre aisle
-      seats.push({ x: 540 + u*half, y, scale, r, k, rows, gap });
+  cap=c;seats=[];
+  const [cols,rows]=GRID[c]||GRID[24];
+  // Pad the space in front of the altar with rows only for high-capacity modes.
+  for(let r=0;r<rows;r++){
+    const y=1828-r*(520/(rows-1));
+    const rowIndex=Math.min(CUSHION_ROWS.length-1,Math.round(r*(CUSHION_ROWS.length-1)/(rows-1)));
+    const base=CUSHION_ROWS[rowIndex];
+    const maxHalf=(base.x[base.x.length-1]-base.x[0])/2;
+    const half=Math.min(maxHalf, (cols>6?maxHalf*1.12:maxHalf));
+    for(let k=0;k<cols;k++){
+      const u=(k-(cols-1)/2)/((cols-1)/2);
+      const x=540+u*half;
+      const scale=(.43-.17*r/(rows-1))*Math.pow(6/cols,.6);
+      seats.push({x,y,scale,r,k,rows,gap:2*half/(cols-1)*.95});
     }
   }
-  // fill front rows first, aisle side first, so a small crowd still looks full on camera
-  seats.sort((a,b)=> (b.r-a.r) || (Math.abs(a.x-540)-Math.abs(b.x-540)));
+  // Fill nearest existing cushions first so 1–24 entrants always occupy the painted floor.
+  seats.sort((a,b)=>(b.y-a.y)||Math.abs(a.x-540)-Math.abs(b.x-540));
   reseat();
 }
 const visitors = new Map();  // id -> visitor
@@ -295,6 +309,54 @@ function tag(text,x,y,s,style,av,maxW){
   if (av){ ctx.save(); ctx.beginPath(); ctx.arc(x-w/2+pad*.55+aw/2, y, fs*.5, 0, 6.29); ctx.clip(); ctx.drawImage(av, x-w/2+pad*.55+aw/2-fs*.5, y-fs*.5, fs, fs); ctx.restore(); }
   ctx.fillStyle = style==='gold'?'#ffd98a':'#f6e9cf'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(text, x+aw/2, y+1);
 }
+function drawCeremonyActor(ctx,rite,skin,scale){
+  const x=rite.x,y=rite.y,k=scale*1.05,stance=rite.kneel,arm=rite.raise,bow=rite.bow;
+  const carrying=rite.event.type==='burnIncense'
+    && ['leaveSeat','walkToStation','holdIncense','raiseIncense','placeIncense'].includes(rite.stage);
+  const offer=rite.stage==='placeIncense' ? rite.progress : 0;
+  const elevation=rite.stage==='raiseIncense'?rite.progress:0;
+  ctx.save();ctx.translate(x,y);ctx.scale(k,k);
+  const stroke=(points,color,width)=>{ctx.beginPath();ctx.moveTo(points[0][0],points[0][1]);
+    for(let i=1;i<points.length;i++)ctx.lineTo(points[i][0],points[i][1]);
+    ctx.strokeStyle=color;ctx.lineWidth=width;ctx.lineCap='round';ctx.lineJoin='round';ctx.stroke();};
+  const fabric=skin==='woman'||skin==='nun'?'#8d98a6':skin==='monk'?'#b68c5c':'#868d95';
+  const outline='#39414a',hand='#dfb792';
+  const hipY=-100+stance*54;
+  // Two separate physical knees and shins touch the ground when kneeling.
+  for(const side of [-1,1]){
+    const hipX=side*29,kneeX=side*(25+stance*26);
+    stroke([[hipX,hipY],[kneeX,-22],[side*(34+stance*38),-5]],outline,35);
+    stroke([[hipX,hipY],[kneeX,-22],[side*(34+stance*38),-5]],fabric,27);
+    if(stance>.2){ctx.fillStyle='#636a71';ctx.beginPath();ctx.ellipse(kneeX,-20,17,12,0,0,7);ctx.fill();}
+  }
+  // torso rotates forward around hip during prostration; head follows torso.
+  const upperY=hipY-128,forward=bow*92,lower=bow*90;
+  const shoulderY=upperY+lower,shoulderX=forward;
+  ctx.save();ctx.translate(0,hipY);ctx.rotate(bow*1.18);
+  ctx.fillStyle=outline;ctx.beginPath();ctx.roundRect(-46,-133,92,135,25);ctx.fill();
+  ctx.fillStyle=fabric;ctx.beginPath();ctx.roundRect(-40,-129,80,124,21);ctx.fill();
+  ctx.fillStyle='#caa481';ctx.beginPath();ctx.ellipse(0,-156,29,31,0,0,7);ctx.fill();
+  ctx.fillStyle='#24242a';ctx.beginPath();ctx.ellipse(0,-172,30,19,0,Math.PI,Math.PI*2);ctx.fill();
+  ctx.restore();
+  const shoulder=[forward,shoulderY+18];
+  // Paired arms: hands rise together, then go forward onto the floor while bowing.
+  const handY=bow>0.1?-30*bow-55:(-145-arm*96-elevation*54);
+  const handX=bow*127+offer*95;
+  for(const side of [-1,1]){
+    const elbow=[side*68+forward*.65, shoulder[1]+52-bow*40];
+    const hand=[handX+side*13,handY];
+    stroke([[shoulder[0]+side*40,shoulder[1]],elbow,hand],outline,20);
+    stroke([[shoulder[0]+side*40,shoulder[1]],elbow,hand],fabric,14);
+    ctx.fillStyle=hand;ctx.beginPath();ctx.ellipse(hand[0],hand[1],10,11,0,0,7);ctx.fill();
+  }
+  // Exactly one incense stick, located between the palms; it travels with both hands.
+  if(carrying&&!(rite.stage==='placeIncense'&&offer>.9)){
+    ctx.strokeStyle='#9a6038';ctx.lineWidth=4;ctx.beginPath();
+    ctx.moveTo(handX,handY);ctx.lineTo(handX,handY-112);ctx.stroke();
+    ctx.fillStyle='#ffc16d';ctx.beginPath();ctx.arc(handX,handY-112,4,0,7);ctx.fill();
+  }
+  ctx.restore();
+}
 function drawSkyLantern(x,y,scale=1,alpha=1){
   ctx.save();ctx.translate(x,y);ctx.scale(scale,scale);ctx.globalAlpha=alpha;
   ctx.shadowColor='#ffc15b';ctx.shadowBlur=24;
@@ -372,50 +434,9 @@ function frame(now){
     const walkSprite=A['anim_'+skin], walkSpec=ANIM[skin];
     ctx.save();ctx.fillStyle='rgba(0,0,0,.35)';ctx.beginPath();
     ctx.ellipse(rite.x,rite.y,50*scale,14*scale,0,0,Math.PI*2);ctx.fill();ctx.restore();
-    ctx.save();ctx.translate(rite.x,rite.y);ctx.globalAlpha=.98;
-    const r=rite.bow;
-    if(rite.pose==='prostrate'||rite.pose==='kneel'){
-      ctx.translate(0,r*50*scale);ctx.transform(1,0,-r*.22,1-r*.7,0,0);
-    }
-    if(walkSpec&&walkSprite?.naturalWidth){
-      const f=rite.moving?Math.floor(rite.elapsed*8)%4:4;
-      const k=scale*1.05*260/walkSpec.seatH;
-      ctx.drawImage(walkSprite,f*walkSpec.fw,0,walkSpec.fw,walkSpec.fh,-walkSpec.fw*k/2,-walkSpec.fh*k,walkSpec.fw*k,walkSpec.fh*k);
-    }else sprite(A[skin]||A.man,0,0,scale*1.4);
-    ctx.restore();
-    // Knee planting and both raised hands are explicit 2D body landmarks.
-    if(rite.kneel>0){
-      ctx.save();ctx.lineCap='round';ctx.strokeStyle='#777a88';ctx.lineWidth=22*scale;
-      for(const side of [-1,1]){ctx.beginPath();ctx.moveTo(rite.x+side*26*scale,rite.y-85*scale*rite.kneel);
-        ctx.lineTo(rite.x+side*36*scale,rite.y-18*scale);ctx.lineTo(rite.x+side*74*scale,rite.y);ctx.stroke();}
-      ctx.restore();
-    }
-    if(['raiseHands','prostrate','rise'].includes(rite.pose)){
-      const lift=rite.pose==='raiseHands'?rite.raise:1;
-      const handY=rite.y-(220+110*lift-rite.bow*90)*scale;
-      ctx.save();ctx.lineCap='round';ctx.strokeStyle='#ddbea1';ctx.lineWidth=Math.max(4,16*scale);
-      for(const side of [-1,1]){ctx.beginPath();ctx.moveTo(rite.x+side*74*scale,rite.y-172*scale);
-        ctx.lineTo(rite.x+side*60*scale,handY+24*scale);ctx.lineTo(rite.x+side*14*scale,handY);ctx.stroke();}
-      ctx.restore();
-    }
-    if(['holdIncense','raiseIncense','placeIncense','walkIncense'].includes(rite.pose)){
-      const shift=rite.pose==='placeIncense'?105*rite.progress:0;
-      const lift=rite.pose==='raiseIncense'?70*rite.progress:rite.pose==='placeIncense'?70:0;
-      const hx=rite.x+shift*scale,hy=rite.y-(225+lift)*scale;
-      ctx.save();ctx.lineCap='round';ctx.lineWidth=Math.max(4,15*scale);ctx.strokeStyle='#ddbea1';
-      for(const side of [-1,1]){ctx.beginPath();ctx.moveTo(rite.x+side*71*scale,rite.y-168*scale);
-        ctx.lineTo(rite.x+side*26*scale+shift*scale,hy+15*scale);ctx.lineTo(hx,hy);ctx.stroke();}
-      if(rite.pose!=='placeIncense'||rite.progress<.85){
-        ctx.lineWidth=Math.max(2,4*scale);ctx.strokeStyle='#a86c38';
-        ctx.beginPath();ctx.moveTo(hx,hy);ctx.lineTo(hx,hy-112*scale);ctx.stroke();
-        ctx.fillStyle='#ffb35b';ctx.beginPath();ctx.arc(hx,hy-112*scale,3,0,7);ctx.fill();}
-      ctx.restore();
-    }
-    if(rite.event.type==='bow'&&['kneelDown','raiseHands','prostrate','holdBow','riseUp'].includes(rite.stage)){
-      ctx.save();ctx.font='700 27px "Be Vietnam Pro",sans-serif';ctx.fillStyle='#ffdf98';ctx.textAlign='center';
-      ctx.fillText('LẠY '+rite.bowCount+' / 3',rite.x,rite.y-390*scale);ctx.restore();
-    }
-    if(rite.event.type==='sendPrayer'&&rite.stage==='holdLantern')drawSkyLantern(rite.x+35*scale,rite.y-240*scale,.68);
+    // A complete anatomically articulated actor replaces the distorted seated sprite.
+    // Torso, hips, two legs and two arms have independent pivot locations.
+    drawCeremonyActor(ctx,rite,skin,scale);
     tag(rite.event.user,rite.x,rite.y-290*scale-22,scale,'gold');
     if(rite.stage==='bowing'&&rite.event.type==='burnIncense'){
       ctx.save();ctx.globalAlpha=.85;sprite(A.incense,rite.x,rite.y-170*scale,.3,.5);ctx.restore();
