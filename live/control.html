@@ -78,6 +78,20 @@ button.red{background:var(--red);border-color:#b84a33}
       <button data-gift="Chuông vàng" data-dia="199">Chuông · 199</button>
     </div>
     <p class="hint">Gõ <b>nam · nữ · sư · ni · tiểu · bà · cao tăng</b> làm bình luận để đổi hình.</p>
+    <h2>Thử nghi lễ tương tác</h2>
+    <p class="hint">Nghi lễ phát lên overlay. Bình luận thật như “thắp hương”, “lạy Phật”, “cầu cho” cũng kích hoạt tự động.</p>
+    <div class="row">
+      <button data-ritual="temple.burnIncense">Dâng hương</button>
+      <button data-ritual="temple.bow">Đảnh lễ 3 lạy</button>
+      <button data-ritual="temple.sendPrayer">Thả hoa đăng</button>
+    </div>
+    <div class="row">
+      <button data-ritual="temple.ringBell">Thỉnh chuông</button>
+      <button data-ritual="temple.strikeWoodenFish">Gõ mõ</button>
+      <button data-ritual="temple.drawFortune">Lời quán chiếu</button>
+      <button data-ritual="temple.offerLotus">Dâng hoa sen</button>
+    </div>
+    <p class="hint" id="ritualTotals">Nghi lễ: chưa có dữ liệu</p>
     <h2>Đổ người mẫu</h2>
     <div class="row"><button data-fill="15">15</button><button data-fill="36">36</button><button data-fill="64">64</button><button data-fill="100">100</button></div>
     <button class="red" id="btnClear">Làm trống toàn bộ bồ đoàn</button>
@@ -142,6 +156,7 @@ function renderPeople(){
   list.forEach((p,i)=>{ const tr=document.createElement('tr'); const a=document.createElement('td'); a.textContent=`${String(i+1).padStart(2,'0')}  ${p.name}`; const b=document.createElement('td'); b.textContent=p.coins? p.coins+' ✧':''; tr.append(a,b); tb.append(tr); });
   $('cnt').textContent = `${people.size} người`;
 }
+function renderRituals(s){ if(!s?.totals)return; const t=s.totals; $('ritualTotals').textContent=`Đã dâng ${t.incense} nén hương · ${t.bows} lạy · ${t.lanterns} hoa đăng · ${t.bells} chuông`; }
 function setTT(st){
   const el=$('tt'); el.className='chip ' + (st.status==='connected'?'ok':st.status==='error'?'bad':'');
   el.textContent = st.status==='connected' ? `TikTok: @${st.uniqueId} ✓` : st.status==='connecting' ? `TikTok: đang kết nối @${st.uniqueId}…` : st.status==='error' ? 'TikTok: lỗi kết nối' : 'TikTok: chưa kết nối';
@@ -152,7 +167,8 @@ function connect(){
   ws.onclose = () => { $('srv').textContent='Server: mất kết nối'; $('srv').className='chip bad'; setTimeout(connect, 2000); };
   ws.onmessage = e => {
     const m = JSON.parse(e.data);
-    if (m.t==='state'){ fillSettings(m.settings); setTT(m.tiktok); people.clear(); for (const v of m.viewers) people.set(v.id,v); renderPeople(); }
+    if (m.t==='state'){ renderRituals(m.rituals); fillSettings(m.settings); setTT(m.tiktok); people.clear(); for (const v of m.viewers) people.set(v.id,v); renderPeople(); }
+    else if (m.t==='ritualState') renderRituals(m.rituals);
     else if (m.t==='logs'){ $('log').textContent=''; m.lines.forEach(logLine); }
     else if (m.t==='log') logLine(m.line);
     else if (m.t==='tiktok') setTT(m);
@@ -169,6 +185,7 @@ $('uid').onkeydown = e => { if (e.key==='Enter') send('connect', { uniqueId: $('
 $('btnDisconnect').onclick = () => send('disconnect');
 $('btnOverlay').onclick = () => window.open('/live/overlay.html', 'overlay916', 'width=540,height=960');
 $('btnChat').onclick = () => send('chat', { name: $('simName').value, text: $('simText').value });
+document.querySelectorAll('[data-ritual]').forEach(b => b.onclick = () => send('ritual', {method:b.dataset.ritual, name:$('simName').value, wish:$('simText').value }));
 document.querySelectorAll('[data-gift]').forEach(b => b.onclick = () => send('gift', { name: $('simName').value, gift: b.dataset.gift, diamonds: +b.dataset.dia, count: 1 }));
 document.querySelectorAll('[data-fill]').forEach(b => b.onclick = () => send('fill', { n: +b.dataset.fill }));
 $('btnClear').onclick = () => send('clear');
