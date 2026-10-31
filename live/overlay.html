@@ -176,6 +176,7 @@ const ritualDirector=createRitualDirector({
 });
 const ritualLights=[];
 let lastActionPhase='', lastLanternId='';
+const placedIncense=[];
 let ritualHide=null;
 function showRitual(event){
   const title=document.getElementById('ritualTitle'), detail=document.getElementById('ritualText'), pane=document.getElementById('ritual');
@@ -257,7 +258,7 @@ function connect(){
     switch(m.t){
       case 'state':
         Object.assign(settings,m.settings); applySettings(); startedAt=m.startedAt;
-        visitors.clear(); order=[]; ritualDirector.reset(); ritualLights.length=0; layout(m.cap); for (const p of m.viewers) addVisitor(p,true); updateCount(); renderMerit(); break;
+        visitors.clear(); order=[]; ritualDirector.reset(); ritualLights.length=0; placedIncense.length=0; layout(m.cap); for (const p of m.viewers) addVisitor(p,true); updateCount(); renderMerit(); break;
       case 'settings': Object.assign(settings,m.settings); applySettings(); if (m.cap!==cap){ layout(m.cap); updateCount(); } break;
       case 'join': if (m.cap!==cap) layout(m.cap); addVisitor(m.v, m.v.demo && visitors.size>8); updateCount(); break;
       case 'leave': removeVisitor(m.id); updateCount(); renderMerit(); break;
@@ -329,11 +330,12 @@ function frame(now){
     const key=rite.event.id+':'+rite.stage+':'+rite.pose;
     if(key!==lastActionPhase){
       lastActionPhase=key;
-      if(rite.pose==='releaseLantern' && rite.event.id!==lastLanternId){
+      if(rite.stage==='releaseLantern' && rite.event.id!==lastLanternId){
         lastLanternId=rite.event.id;
         ritualLights.push({x:rite.x,y:rite.y-125,life:18,at:now,text:rite.event.user});
       }
-      if(rite.pose==='prostrate') mo();
+      if(rite.stage==='holdBow') mo();
+      if(rite.stage==='placeIncense' && !placedIncense.some(v=>v.id===rite.event.id)) placedIncense.push({id:rite.event.id,x:540,y:1020});
     }
   }else{lastActionPhase='';}
   const ritualVisitor=rite && (visitors.get(rite.event.viewerId)||[...visitors.values()].find(v=>v.name===rite.event.user));
@@ -381,29 +383,49 @@ function frame(now){
       ctx.drawImage(walkSprite,f*walkSpec.fw,0,walkSpec.fw,walkSpec.fh,-walkSpec.fw*k/2,-walkSpec.fh*k,walkSpec.fw*k,walkSpec.fh*k);
     }else sprite(A[skin]||A.man,0,0,scale*1.4);
     ctx.restore();
-    if(['joinHands','offerIncense','holdLantern','releaseLantern'].includes(rite.pose)){
-      ctx.save();ctx.strokeStyle='#f5cca2';ctx.lineWidth=Math.max(4,14*scale);ctx.lineCap='round';
-      ctx.beginPath();ctx.moveTo(rite.x-43*scale,rite.y-170*scale);ctx.lineTo(rite.x,rite.y-220*scale);
-      ctx.moveTo(rite.x+46*scale,rite.y-170*scale);ctx.lineTo(rite.x,rite.y-220*scale);ctx.stroke();ctx.restore();
+    // Knee planting and both raised hands are explicit 2D body landmarks.
+    if(rite.kneel>0){
+      ctx.save();ctx.lineCap='round';ctx.strokeStyle='#777a88';ctx.lineWidth=22*scale;
+      for(const side of [-1,1]){ctx.beginPath();ctx.moveTo(rite.x+side*26*scale,rite.y-85*scale*rite.kneel);
+        ctx.lineTo(rite.x+side*36*scale,rite.y-18*scale);ctx.lineTo(rite.x+side*74*scale,rite.y);ctx.stroke();}
+      ctx.restore();
     }
-    if(rite.event.type==='burnIncense'&&['prepareAction','performAction'].includes(rite.stage)){
-      const raised=rite.pose==='offerIncense'?1:0;
-      ctx.save();ctx.translate(rite.x+44*scale,rite.y-(215+raised*40)*scale);
-      ctx.shadowColor='#ffe2a0';ctx.shadowBlur=10;ctx.strokeStyle='#ae6738';ctx.lineWidth=3;
-      for(let j=-1;j<=1;j++){ctx.beginPath();ctx.moveTo(j*6*scale,0);ctx.lineTo(j*6*scale,-85*scale);ctx.stroke();}
-      ctx.fillStyle='#ff9b42';ctx.beginPath();ctx.arc(0,-85*scale,4,0,7);ctx.fill();ctx.restore();
+    if(['raiseHands','prostrate','rise'].includes(rite.pose)){
+      const lift=rite.pose==='raiseHands'?rite.raise:1;
+      const handY=rite.y-(220+110*lift-rite.bow*90)*scale;
+      ctx.save();ctx.lineCap='round';ctx.strokeStyle='#ddbea1';ctx.lineWidth=Math.max(4,16*scale);
+      for(const side of [-1,1]){ctx.beginPath();ctx.moveTo(rite.x+side*74*scale,rite.y-172*scale);
+        ctx.lineTo(rite.x+side*60*scale,handY+24*scale);ctx.lineTo(rite.x+side*14*scale,handY);ctx.stroke();}
+      ctx.restore();
     }
-    if(rite.event.type==='sendPrayer'&&['prepareAction','performAction'].includes(rite.stage)&&rite.pose!=='releaseLantern'){
-      drawSkyLantern(rite.x+38*scale,rite.y-255*scale,.65);
+    if(['holdIncense','raiseIncense','placeIncense','walkIncense'].includes(rite.pose)){
+      const shift=rite.pose==='placeIncense'?105*rite.progress:0;
+      const lift=rite.pose==='raiseIncense'?70*rite.progress:rite.pose==='placeIncense'?70:0;
+      const hx=rite.x+shift*scale,hy=rite.y-(225+lift)*scale;
+      ctx.save();ctx.lineCap='round';ctx.lineWidth=Math.max(4,15*scale);ctx.strokeStyle='#ddbea1';
+      for(const side of [-1,1]){ctx.beginPath();ctx.moveTo(rite.x+side*71*scale,rite.y-168*scale);
+        ctx.lineTo(rite.x+side*26*scale+shift*scale,hy+15*scale);ctx.lineTo(hx,hy);ctx.stroke();}
+      if(rite.pose!=='placeIncense'||rite.progress<.85){
+        ctx.lineWidth=Math.max(2,4*scale);ctx.strokeStyle='#a86c38';
+        ctx.beginPath();ctx.moveTo(hx,hy);ctx.lineTo(hx,hy-112*scale);ctx.stroke();
+        ctx.fillStyle='#ffb35b';ctx.beginPath();ctx.arc(hx,hy-112*scale,3,0,7);ctx.fill();}
+      ctx.restore();
     }
-    if(rite.event.type==='bow'&&rite.stage==='performAction'){
-      ctx.save();ctx.font='700 28px "Be Vietnam Pro",sans-serif';ctx.fillStyle='#ffd98a';ctx.textAlign='center';
+    if(rite.event.type==='bow'&&['kneelDown','raiseHands','prostrate','holdBow','riseUp'].includes(rite.stage)){
+      ctx.save();ctx.font='700 27px "Be Vietnam Pro",sans-serif';ctx.fillStyle='#ffdf98';ctx.textAlign='center';
       ctx.fillText('LẠY '+rite.bowCount+' / 3',rite.x,rite.y-390*scale);ctx.restore();
     }
+    if(rite.event.type==='sendPrayer'&&rite.stage==='holdLantern')drawSkyLantern(rite.x+35*scale,rite.y-240*scale,.68);
     tag(rite.event.user,rite.x,rite.y-290*scale-22,scale,'gold');
     if(rite.stage==='bowing'&&rite.event.type==='burnIncense'){
       ctx.save();ctx.globalAlpha=.85;sprite(A.incense,rite.x,rite.y-170*scale,.3,.5);ctx.restore();
     }
+  }
+  // Lit incense remains visible in the burner after placement.
+  for(let i=0;i<placedIncense.length;i++){
+    const v=placedIncense[i],x=v.x+(i%9-4)*5,y=v.y;
+    ctx.save();ctx.strokeStyle='#a66d34';ctx.lineWidth=2.5;ctx.beginPath();ctx.moveTo(x,y+32);ctx.lineTo(x,y-40);ctx.stroke();
+    ctx.fillStyle='#ffaf54';ctx.beginPath();ctx.arc(x,y-40,3,0,7);ctx.fill();ctx.restore();
   }
   // Floating sky lanterns: warm core, paper shade, gentle sway, no external image dependencies.
   for(let i=ritualLights.length-1;i>=0;i--){
