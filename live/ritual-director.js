@@ -1,122 +1,131 @@
-// Original 2.5D ritual choreography for Len Chua Online.
-// Pure timeline/queue logic: runs in browsers and is unit-tested in Node.
-const MOVE_TO_AISLE = 1.0;
-const MOVE_TO_ALTAR = 2.4;
-const MOVE_BACK_AISLE = 2.4;
-const MOVE_BACK_SEAT = 1.0;
-const ALTAR = Object.freeze({ x: 540, y: 1175 });
-const CLAMP = (n, low, high) => Math.max(low, Math.min(high, n));
-const LERP = (a, b, p) => a + (b - a) * CLAMP(p, 0, 1);
-const EASE = p => { const x = CLAMP(p, 0, 1); return x * x * (3 - 2 * x); };
-const MAX_PENDING = 12;
-const MAX_SPEECH_WAIT = 12; // seconds after arriving at altar
+// Original action choreography; browser + Node compatible. No borrowed assets.
+export const RITUAL_STATIONS = Object.freeze({
+  burnIncense: { x: 540, y: 1165 },
+  bow: { x: 540, y: 1220 },
+  sendPrayer: { x: 690, y: 1245 },
+  offerLotus: { x: 420, y: 1225 },
+  drawFortune: { x: 540, y: 1245 }
+});
+const clip = (n, low=0, high=1) => Math.max(low, Math.min(high, n));
+const ease = p => { const t=clip(p);return t*t*(3-2*t); };
+const mix = (a,b,p) => a+(b-a)*clip(p);
+const TIME = Object.freeze({
+  leaveSeat: 1.05, walkToStation: 2.1, prepareAction: 0.85,
+  returnAisle: 2.1, returnSeat: 1.05, simple: 1.2
+});
+const DURATION = { burnIncense: 3.8, bow: 5.7, sendPrayer: 3.8,
+  offerLotus: 2.5, drawFortune: 2.5 };
+const DEFAULT_HOME = { x: 380, y: 1720 };
 
-export function createRitualDirector({ maxQueue = MAX_PENDING, onStart = () => {}, onFinish = () => {} } = {}) {
-  let pending = [], active = null, dropped = 0, completed = 0;
-  const ids = new Set();
-
-  const isCeremony = event => !['ringBell', 'strikeWoodenFish'].includes(event.type);
+export function createRitualDirector({ maxQueue=12, onStart=()=>({}), onFinish=()=>{}, onPhase=()=>{} }={}) {
+  let pending=[], active=null, completed=0, dropped=0;
+  const ids=new Set();
+  function enter(stage) {
+    if(!active) return;
+    active.stage=stage;active.stageTime=0;
+    onPhase(active.event,stage);
+  }
+  function start() {
+    if(active || !pending.length) return;
+    const event=pending.shift();
+    const placement=onStart(event)||{};
+    const home={x:clip(Number(placement.x)||DEFAULT_HOME.x,40,1040),
+      y:clip(Number(placement.y)||DEFAULT_HOME.y,1180,1900)};
+    active={event,home,station:RITUAL_STATIONS[event.type]||RITUAL_STATIONS.bow,
+      stage:'',stageTime:0,elapsed:0,voiceStarted:false,voiceDone:false};
+    enter(['ringBell','strikeWoodenFish'].includes(event.type)?'simple':'leaveSeat');
+  }
   function enqueue(event) {
-    if (!event || typeof event.id !== 'string' || !event.type || ids.has(event.id)) return false;
-    if (pending.length >= maxQueue) { dropped++; return false; }
-    ids.add(event.id);
-    pending.push(event);
-    if (!active) activate();
-    return true;
+    if(!event || typeof event.id!=='string' || !event.id || !event.type || ids.has(event.id)) return false;
+    if(pending.length>=maxQueue){dropped++;return false;}
+    ids.add(event.id);pending.push(event);start();return true;
   }
-  function activate() {
-    if (active || !pending.length) return;
-    const event = pending.shift();
-    const start = onStart(event) || {};
-    const home = {
-      x: CLAMP(Number(start.x) || 540, 50, 1030),
-      y: CLAMP(Number(start.y) || 1850, 1160, 2050)
-    };
-    active = {
-      event, home, elapsed: 0,
-      stage: isCeremony(event) ? 'toAisle' : 'simple',
-      stageTime: 0, voiceStarted: false, voiceDone: false
-    };
-  }
-  function next() {
-    if (!active) return;
-    const finished = active.event;
-    ids.delete(finished.id);
-    completed++;
-    active = null;
-    onFinish(finished);
-    activate();
+  function complete(){
+    if(!active)return;
+    const event=active.event;
+    ids.delete(event.id); completed++;active=null;
+    onFinish(event);start();
   }
   function speechStart(id) {
-    if (!active || active.event.id !== id) return false;
-    active.voiceStarted = true;
-    return true;
+    if(active?.event.id!==id)return false;
+    active.voiceStarted=true;return true;
   }
   function speechEnd(id) {
-    if (!active || active.event.id !== id) return false;
-    active.voiceDone = true;
-    return true;
+    if(active?.event.id!==id)return false;
+    active.voiceDone=true;return true;
   }
   function advance(dt) {
-    if (!active) activate();
-    if (!active) return null;
-    const s = active;
-    const step = CLAMP(Number(dt) || 0, 0, 0.1);
-    s.elapsed += step;
-    s.stageTime += step;
-    const move = stage => { s.stage = stage; s.stageTime = 0; };
-    switch (s.stage) {
-      case 'simple':
-        if (s.stageTime >= 1.7) next();
+    start();if(!active)return null;
+    const s=active;
+    const tick=clip(Number(dt)||0,0,0.1);
+    s.elapsed+=tick;s.stageTime+=tick;
+    const t=s.stageTime;
+    switch(s.stage){
+      case 'simple':if(t>=TIME.simple)complete();break;
+      case 'leaveSeat':if(t>=TIME.leaveSeat)enter('walkToStation');break;
+      case 'walkToStation':if(t>=TIME.walkToStation)enter('prepareAction');break;
+      case 'prepareAction':if(t>=TIME.prepareAction)enter('performAction');break;
+      case 'performAction':
+        if(t>=(DURATION[s.event.type]||2.5))enter('holdAction');
         break;
-      case 'toAisle':
-        if (s.stageTime >= MOVE_TO_AISLE) move('toAltar');
+      case 'holdAction':
+        // Never trap the actor because the voice engine or network failed.
+        if(t>0.55 && (!s.voiceStarted || s.voiceDone || t>9))enter('returnAisle');
         break;
-      case 'toAltar':
-        if (s.stageTime >= MOVE_TO_ALTAR) move('waiting');
-        break;
-      case 'waiting':
-        if (!s.event.speechExpected || s.voiceStarted || s.stageTime >= MAX_SPEECH_WAIT) move('bowing');
-        break;
-      case 'bowing': {
-        const cycles = s.event.type === 'bow' ? 3 : 1;
-        const motionDone = s.stageTime >= cycles * 1.4;
-        const narrationDone = !s.event.speechExpected || !s.voiceStarted || s.voiceDone || s.stageTime > 25;
-        if (motionDone && narrationDone) move('fromAltar');
-        break;
-      }
-      case 'fromAltar':
-        if (s.stageTime >= MOVE_BACK_AISLE) move('toSeat');
-        break;
-      case 'toSeat':
-        if (s.stageTime >= MOVE_BACK_SEAT) next();
-        break;
+      case 'returnAisle':if(t>=TIME.returnAisle)enter('returnSeat');break;
+      case 'returnSeat':if(t>=TIME.returnSeat)complete();break;
     }
     return snapshot();
   }
-  function snapshot() {
-    if (!active) return null;
-    const s = active, t = s.stageTime, home = s.home;
-    const aisle = { x: ALTAR.x, y: home.y };
-    let x = home.x, y = home.y, bow = 0;
-    switch (s.stage) {
-      case 'toAisle': x = LERP(home.x, aisle.x, EASE(t / MOVE_TO_AISLE)); break;
-      case 'toAltar': x = aisle.x; y = LERP(aisle.y, ALTAR.y, EASE(t / MOVE_TO_ALTAR)); break;
-      case 'waiting': case 'bowing':
-        x = ALTAR.x; y = ALTAR.y;
-        if (s.stage === 'bowing') {
-          const cycles = s.event.type === 'bow' ? 3 : 1;
-          const fraction = Math.min(t / 1.4, cycles);
-          bow = t >= cycles * 1.4 ? 0 : Math.pow(Math.sin(Math.PI * (fraction % 1)), 2);
+  function snapshot(){
+    if(!active)return null;
+    const s=active,{event,home,station}=s;
+    const t=s.stageTime;
+    const aisle={x:540,y:home.y};
+    let x=home.x,y=home.y,pose='stand',bow=0,bowCount=0,actionProgress=0;
+    switch(s.stage){
+      case 'leaveSeat':
+        x=mix(home.x,aisle.x,ease(t/TIME.leaveSeat));pose='walk';break;
+      case 'walkToStation':
+        x=mix(aisle.x,station.x,ease(t/TIME.walkToStation));
+        y=mix(aisle.y,station.y,ease(t/TIME.walkToStation));pose='walk';break;
+      case 'prepareAction':
+        x=station.x;y=station.y;pose='joinHands';break;
+      case 'performAction':{
+        x=station.x;y=station.y;
+        const duration=DURATION[event.type]||2.5;
+        actionProgress=clip(t/duration);
+        if(event.type==='bow'){
+          const index=Math.min(2,Math.floor(t/1.9));
+          const cycle=clip((t-index*1.9)/1.9);
+          // Each bow: hands joined -> kneel -> five-point prostration -> rise.
+          bowCount=index+1;
+          bow=cycle<.22?0:cycle<.48?ease((cycle-.22)/.26):cycle<.72?1:1-ease((cycle-.72)/.28);
+          pose=bow>.75?'prostrate':bow>.25?'kneel':'joinHands';
+        }else if(event.type==='burnIncense'){
+          pose=actionProgress<.25?'joinHands':actionProgress<.75?'offerIncense':'joinHands';
+        }else if(event.type==='sendPrayer'){
+          pose=actionProgress<.65?'holdLantern':'releaseLantern';
+        }else{
+          pose='joinHands';
         }
         break;
-      case 'fromAltar': x = ALTAR.x; y = LERP(ALTAR.y, aisle.y, EASE(t / MOVE_BACK_AISLE)); break;
-      case 'toSeat': x = LERP(aisle.x, home.x, EASE(t / MOVE_BACK_SEAT)); y = home.y; break;
+      }
+      case 'holdAction':
+        x=station.x;y=station.y;pose='joinHands';actionProgress=1;break;
+      case 'returnAisle':
+        x=mix(station.x,aisle.x,ease(t/TIME.returnAisle));
+        y=mix(station.y,aisle.y,ease(t/TIME.returnAisle));pose='walk';break;
+      case 'returnSeat':
+        x=mix(aisle.x,home.x,ease(t/TIME.returnSeat));y=home.y;pose='walk';break;
+      case 'simple':
+        pose='stand';break;
     }
-    return { event: s.event, stage: s.stage, x, y, bow, moving: ['toAisle','toAltar','fromAltar','toSeat'].includes(s.stage),
-      speechWaiting: s.stage === 'waiting' && s.event.speechExpected && !s.voiceStarted };
+    return {event,stage:s.stage,x,y,pose,bow,bowCount,actionProgress,
+      moving:pose==='walk',canPlayVoice:['prepareAction','performAction','holdAction'].includes(s.stage),
+      elapsed:s.elapsed,stageTime:s.stageTime,station:{...station}};
   }
-  function stats() { return { queued: pending.length, active: active?.event.id ?? null, dropped, completed }; }
-  function reset() { pending = []; ids.clear(); active = null; }
-  return { enqueue, advance, snapshot, speechStart, speechEnd, stats, reset };
+  function stats(){return {active:active?.event.id||null,queued:pending.length,completed,dropped};}
+  function reset(){pending=[];active=null;ids.clear();}
+  return {enqueue,advance,snapshot,stats,speechStart,speechEnd,reset};
 }

@@ -1,64 +1,73 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRitualDirector } from '../ritual-director.js';
+import { createRitualDirector, RITUAL_STATIONS } from '../ritual-director.js';
 
-const event = (id, type='bow', speechExpected=false) => ({ id, type, title:'Nghi lễ', user:'Diệu Hạnh', speechExpected });
-function run(director, seconds, dt=.05) {
-  let result;
-  for(let i=0;i<Math.ceil(seconds/dt);i++) result=director.advance(dt);
-  return result;
-}
-test('one worshipper travels aisle, reaches altar, completes three bows and returns to original seat', () => {
-  const started=[], done=[];
-  const d=createRitualDirector({onStart:e=>{started.push(e.id);return{x:240,y:1750};},onFinish:e=>done.push(e.id)});
-  assert.equal(d.enqueue(event('a')),true);
-  let seenAisle=false, seenAltar=false, bowPeaks=0, wasHigh=false;
-  for(let i=0;i<400;i++){
+const event=(id,type='bow',speechExpected=false)=>({id,type,title:'Nghi lễ',user:'Diệu Hạnh',speechExpected});
+function step(d,seconds){let s;for(let i=0;i<seconds*20;i++)s=d.advance(.05);return s;}
+test('three distinct full prostrations at altar followed by return to home',()=>{
+  const done=[],stages=[];
+  const d=createRitualDirector({onStart:()=>({x:240,y:1750}),onFinish:e=>done.push(e.id),onPhase:(_,stage)=>stages.push(stage)});
+  d.enqueue(event('a'));
+  let peaks=0,high=false,feetAtHome=false,altar=false,actorWentAway=false;
+  for(let i=0;i<450;i++){
     const s=d.advance(.05);
     if(!s)break;
-    if(s.stage==='toAisle')seenAisle=true;
-    if(s.stage==='bowing' && s.x===540 && s.y===1175)seenAltar=true;
-    const high=s.bow>.8;
-    if(high&&!wasHigh)bowPeaks++;
-    wasHigh=high;
+    if(s.pose==='walk'&&s.x>300)actorWentAway=true;
+    if(s.stage==='performAction'){altar=altar||s.x===RITUAL_STATIONS.bow.x&&s.y===RITUAL_STATIONS.bow.y;}
+    const peak=s.pose==='prostrate';
+    if(peak&&!high)peaks++;
+    high=peak;
+    if(s.stage==='returnSeat'&&Math.abs(s.x-240)<10)feetAtHome=true;
   }
-  assert.equal(seenAisle,true);
-  assert.equal(seenAltar,true);
-  assert.equal(bowPeaks,3);
-  assert.deepEqual(started,['a']);
-  assert.deepEqual(done,['a']);
+  assert.equal(altar,true);assert.equal(actorWentAway,true);assert.equal(peaks,3);
+  assert.equal(feetAtHome,true);assert.deepEqual(done,['a']);
+  assert.ok(stages.includes('prepareAction')&&stages.includes('returnAisle'));
   assert.equal(d.stats().active,null);
 });
-test('wait for matching TTS playback start and completion; do not sync to another ritual',()=>{
-  const d=createRitualDirector();
-  d.enqueue(event('p','sendPrayer',true));
-  run(d,4);
-  assert.equal(d.snapshot()?.stage,'waiting');
+test('incense offering actually has an offer pose at incense station',()=>{
+  const d=createRitualDirector({onStart:()=>({x:330,y:1700})});
+  d.enqueue(event('inc','burnIncense'));
+  let offered=false;
+  for(let i=0;i<300;i++){
+    const s=d.advance(.05);
+    if(s?.pose==='offerIncense'){offered=true;assert.equal(s.x,540);assert.equal(s.y,1165);}
+  }
+  assert.equal(offered,true);
+});
+test('lantern held before release at its own station',()=>{
+  const d=createRitualDirector();d.enqueue(event('lan','sendPrayer'));
+  let held=false,released=false;
+  for(let i=0;i<300;i++){
+    const s=d.advance(.05);
+    if(s?.pose==='holdLantern')held=true;
+    if(s?.pose==='releaseLantern'){released=true;assert.equal(s.station.x,690);}
+  }
+  assert.equal(held,true);assert.equal(released,true);
+});
+test('TTS events tied to active ritual; failed voice must not trap queue',()=>{
+  const d=createRitualDirector();d.enqueue(event('p','sendPrayer',true));
+  step(d,4.5);
   assert.equal(d.speechStart('wrong'),false);
   assert.equal(d.speechStart('p'),true);
-  run(d,3);
-  assert.equal(d.snapshot()?.stage,'bowing');
-  d.speechEnd('p');
-  run(d,7);
+  assert.equal(d.speechEnd('p'),true);
+  step(d,20);
   assert.equal(d.stats().active,null);
 });
-test('fallback progress when audio is unavailable, bounded queue and de-duplication',()=>{
+test('bounded queue and deduplication, fallback when voice never starts',()=>{
   const d=createRitualDirector({maxQueue:2});
   assert.equal(d.enqueue(event('1','bow',true)),true);
-  assert.equal(d.enqueue(event('1','bow',true)),false);
+  assert.equal(d.enqueue(event('1')),false);
   assert.equal(d.enqueue(event('2')),true);
   assert.equal(d.enqueue(event('3')),true);
   assert.equal(d.enqueue(event('4')),false);
-  assert.equal(d.stats().dropped,1);
-  run(d,70);
-  assert.equal(d.stats().active,null);
-  assert.equal(d.stats().queued,0);
+  step(d,85);
   assert.equal(d.stats().completed,3);
+  assert.equal(d.stats().queued,0);
+  assert.equal(d.stats().dropped,1);
 });
-test('bell and wooden fish bypass walking sequence',()=>{
+test('bell and wooden fish skip movement choreography',()=>{
   const d=createRitualDirector();
   d.enqueue(event('b','ringBell'));
-  assert.equal(d.snapshot()?.stage,'simple');
-  run(d,3);
-  assert.equal(d.stats().completed,1);
+  assert.equal(d.snapshot().stage,'simple');
+  step(d,3);assert.equal(d.stats().completed,1);
 });
